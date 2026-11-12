@@ -1,0 +1,217 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  role         String    @default("OWNER") // OWNER | OPERATOR
+  status       String    @default("ACTIVE") // ACTIVE | DISABLED
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLoginAt  DateTime?
+}
+
+model GhostSettings {
+  id                String   @id @default(uuid())
+  mode              String   @default("ASSIST") // OBSERVE | ASSIST | AUTOPILOT | LOCKDOWN
+  killSwitchEnabled Boolean  @default(false)
+  killSwitchReason  String?
+  updatedBy         String   @default("system")
+  updatedAt         DateTime @updatedAt
+  version           Int      @default(1)
+}
+
+model AuthorityPolicy {
+  id                     String    @id @default(uuid())
+  version                Int       @unique
+  status                 String    @default("ACTIVE") // DRAFT | ACTIVE | ARCHIVED
+  actionPermissionsJson  String
+  maxPaymentMinor        Int
+  maxRefundMinor         Int
+  maxDiscountBasisPoints Int
+  dailyExposureMinor     Int
+  maxCustomerExposureMinor Int
+  maxActionsPerMinute    Int
+  riskBudgetUnits        Int
+  riskRulesJson          String
+  createdBy              String
+  createdAt              DateTime  @default(now())
+  publishedAt            DateTime?
+  changeReason           String?
+}
+
+model Customer {
+  id                String         @id @default(uuid())
+  externalReference String?
+  displayName       String
+  email             String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  facts             CustomerFact[]
+  sessions          AgentSession[]
+}
+
+model CustomerFact {
+  id              String    @id @default(uuid())
+  customerId      String
+  customer        Customer  @relation(fields: [customerId], references: [id])
+  factType        String
+  valueJson       String
+  sourceType      String    // VERIFIED_PROVIDER | INTERNAL_RECORD | CUSTOMER_CLAIM
+  sourceReference String?
+  verified        Boolean   @default(false)
+  observedAt      DateTime  @default(now())
+  expiresAt       DateTime?
+  createdAt       DateTime  @default(now())
+}
+
+model AgentSession {
+  id         String           @id @default(uuid())
+  customerId String?
+  customer   Customer?        @relation(fields: [customerId], references: [id])
+  status     String           @default("ACTIVE")
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  messages   AgentMessage[]
+  proposals  ActionProposal[]
+}
+
+model AgentMessage {
+  id              String       @id @default(uuid())
+  sessionId       String
+  session         AgentSession @relation(fields: [sessionId], references: [id])
+  role            String       // CUSTOMER | GHOST | SYSTEM
+  contentRedacted String
+  intent          String?
+  createdAt       DateTime     @default(now())
+}
+
+model ActionProposal {
+  id                   String               @id @default(uuid())
+  sessionId            String
+  session              AgentSession         @relation(fields: [sessionId], references: [id])
+  actionType           String
+  canonicalPayloadJson String
+  payloadHash          String
+  modelName            String?
+  modelVersion         String?
+  confidence           Float?
+  createdAt            DateTime             @default(now())
+  decisions            Decision[]
+  operations           FinancialOperation[]
+}
+
+model Decision {
+  id                          String         @id @default(uuid())
+  proposalId                  String
+  proposal                    ActionProposal @relation(fields: [proposalId], references: [id])
+  policyVersion               Int
+  outcome                     String         // ALLOW | REQUIRE_APPROVAL | BLOCK | REVIEW | OBSERVE_ONLY | FROZEN
+  reasonCodesJson             String
+  checksJson                  String
+  riskUnits                   Int            @default(0)
+  customerContextSnapshotJson String?
+  correlationId               String
+  createdAt                   DateTime       @default(now())
+  approvals                   Approval[]
+}
+
+model Approval {
+  id          String    @id @default(uuid())
+  decisionId  String
+  decision    Decision  @relation(fields: [decisionId], references: [id])
+  payloadHash String
+  status      String    @default("PENDING") // PENDING | APPROVED | REJECTED | EXPIRED | USED | REVOKED
+  requestedBy String
+  decidedBy   String?
+  expiresAt   DateTime
+  decidedAt   DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model FinancialOperation {
+  id                  String              @id @default(uuid())
+  proposalId          String?
+  proposal            ActionProposal?     @relation(fields: [proposalId], references: [id])
+  actionType          String
+  amountMinor         Int
+  currency            String              @default("USD")
+  status              String              @default("CREATED")
+  idempotencyKey      String              @unique
+  paypalOrderId       String?
+  paypalCaptureId     String?
+  paypalRefundId      String?
+  providerStatus      String?
+  lastProviderCheckAt DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  budgetEntries       BudgetLedgerEntry[]
+}
+
+model BudgetLedgerEntry {
+  id          String              @id @default(uuid())
+  operationId String?
+  operation   FinancialOperation? @relation(fields: [operationId], references: [id])
+  customerId  String?
+  budgetType  String              // DAILY_EXPOSURE | CUSTOMER_EXPOSURE | RISK_UNITS
+  deltaMinor  Int                 @default(0)
+  deltaUnits  Int                 @default(0)
+  currency    String?
+  reasonCode  String
+  createdAt   DateTime            @default(now())
+}
+
+model AuditEvent {
+  id                 String   @id @default(uuid())
+  actorType          String   // USER | SYSTEM | AI | PAYPAL_WEBHOOK
+  actorId            String?
+  eventType          String
+  entityType         String
+  entityId           String
+  correlationId      String
+  payloadRedactedJson String
+  createdAt          DateTime @default(now())
+}
+
+model SimulationRun {
+  id                    String   @id @default(uuid())
+  createdBy             String
+  baselinePolicyVersion Int
+  proposedPolicyJson    String
+  fixtureSetVersion     String
+  resultsJson           String
+  status                String   @default("COMPLETED")
+  createdAt             DateTime @default(now())
+}
+
+model RedTeamRun {
+  id           String              @id @default(uuid())
+  suiteVersion String
+  startTime    DateTime            @default(now())
+  endTime      DateTime?
+  status       String              @default("RUNNING") // RUNNING | PASSED | FAILED
+  initiatedBy  String
+  createdAt    DateTime            @default(now())
+  results      RedTeamCaseResult[]
+}
+
+model RedTeamCaseResult {
+  id              String     @id @default(uuid())
+  runId           String
+  run             RedTeamRun @relation(fields: [runId], references: [id])
+  caseId          String
+  name            String
+  expectedOutcome String
+  actualOutcome   String
+  pass            Boolean
+  evidenceJson    String
+  correlationId   String
+  createdAt       DateTime   @default(now())
+}
